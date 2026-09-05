@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Internet Speed Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="dark-theme">
+  <div class="app-container">
+    
+    <!-- HEADER -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand-icon">⚡</span>
+        <span class="brand-title">SPEED<span class="accent">TEST</span></span>
+      </div>
+      <div class="header-actions">
+        <button id="themeToggleBtn" class="icon-btn" title="Toggle Theme" aria-label="Toggle Theme">
+          <svg id="themeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN HERO SPEED DISPLAY -->
+    <main class="hero-section">
+      <div class="status-indicator" id="statusText">Initializing speed test...</div>
+
+      <!-- MAIN SPEED NUMERIC READOUT -->
+      <div class="speed-display-group">
+        <div class="speed-number-wrapper">
+          <span class="speed-number" id="speedValue">0</span>
+        </div>
+        <div class="speed-unit-group">
+          <span class="speed-unit" id="speedUnit">Mbps</span>
+          
+          <!-- CIRCULAR CONTROL BUTTON WITH RING ANIMATION -->
+          <div class="control-ring-container">
+            <svg class="progress-ring" width="60" height="60" viewBox="0 0 60 60">
+              <circle class="ring-bg" cx="30" cy="30" r="26"></circle>
+              <circle class="ring-active" id="progressRing" cx="30" cy="30" r="26"></circle>
+            </svg>
+            <button id="mainActionBtn" class="control-btn" aria-label="Pause or Restart Test">
+              <!-- PAUSE ICON (default active state) -->
+              <svg id="iconPause" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="4" width="4" height="16" rx="1"></rect>
+                <rect x="14" y="4" width="4" height="16" rx="1"></rect>
+              </svg>
+              <!-- RESTART ICON -->
+              <svg id="iconRestart" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <!-- PLAY ICON -->
+              <svg id="iconPlay" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="display: none;">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SHOW DETAILS TOGGLE BUTTON -->
+      <button id="toggleDetailsBtn" class="toggle-details-btn">
+        <span id="detailsBtnLabel">Show More Info</span>
+        <svg id="detailsArrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+
+      <!-- EXPANDABLE DETAILED METRICS PANEL -->
+      <section id="detailsPanel" class="details-panel hidden">
+        
+        <!-- METRICS GRID -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-label">Latency / Ping</div>
+            <div class="metric-value"><span id="pingValue">--</span> <span class="metric-unit">ms</span></div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-label">Jitter</div>
+            <div class="metric-value"><span id="jitterValue">--</span> <span class="metric-unit">ms</span></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">Upload Speed</div>
+            <div class="metric-value"><span id="uploadValue">--</span> <span class="metric-unit">Mbps</span></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">Loaded Ping</div>
+            <div class="metric-value"><span id="loadedPingValue">--</span> <span class="metric-unit">ms</span></div>
+          </div>
+        </div>
+
+        <!-- SERVER & CONNECTION INFO -->
+        <div class="info-row">
+          <div class="info-item">
+            <span class="info-label">Server</span>
+            <span class="info-val" id="serverInfoText">Connecting...</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Connection</span>
+            <span class="info-val" id="connectionInfoText">Multi-Stream HTTP/2</span>
+          </div>
+        </div>
+
+        <!-- REALTIME WAVEFORM CHART -->
+        <div class="chart-container">
+          <div class="chart-header">
+            <span>Live Speed Waveform</span>
+            <span class="chart-legend"><span class="legend-dot download"></span> Download &nbsp; <span class="legend-dot upload"></span> Upload</span>
+          </div>
+          <canvas id="speedChart" width="600" height="150"></canvas>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <p>Precision Internet Speed Measurement • High-Speed Streaming Engine</p>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
