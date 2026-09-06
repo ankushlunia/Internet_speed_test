@@ -9,7 +9,7 @@ class SpeedTestEngine {
     // Lifecycle States: 'IDLE' | 'PING' | 'WARMUP' | 'DOWNLOAD' | 'UPLOAD' | 'FINISHED' | 'PAUSED'
     this.state = 'IDLE';
     
-    // Test Durations (seconds)
+    // Test Durations (ms)
     this.downloadDurationMs = 7000;
     this.uploadDurationMs = 6000;
     
@@ -81,7 +81,7 @@ class SpeedTestEngine {
         this.elServerInfo.textContent = `${info.location} (${info.serverName})`;
       }
     } catch (e) {
-      this.elServerInfo.textContent = 'Local Cloud Node';
+      this.elServerInfo.textContent = 'Local Server';
     }
   }
 
@@ -89,7 +89,9 @@ class SpeedTestEngine {
   // TEST LIFECYCLE MANAGEMENT
   // -------------------------------------------------------------------
   async startTest() {
-    if (this.state !== 'IDLE' && this.state !== 'FINISHED' && this.state !== 'PAUSED') return;
+    if (this.state === 'PING' || this.state === 'WARMUP' || this.state === 'DOWNLOAD' || this.state === 'UPLOAD') {
+      return;
+    }
 
     this.isAborted = false;
     this.isPaused = false;
@@ -142,20 +144,23 @@ class SpeedTestEngine {
     this.startTest();
   }
 
-  abortAllStreams() {
-    this.isAborted = true;
-    
-    // Cancel active ReadableStream readers immediately so reader.read() unblocks
+  // Clean up network connections without marking the overall test aborted
+  cleanupStreams() {
     this.activeReaders.forEach(reader => {
       try { reader.cancel(); } catch (e) {}
     });
     this.activeReaders = [];
 
-    // Abort active fetch controllers
     this.activeConnections.forEach(controller => {
       try { controller.abort(); } catch (e) {}
     });
     this.activeConnections = [];
+  }
+
+  // User-initiated or hard abort
+  abortAllStreams() {
+    this.isAborted = true;
+    this.cleanupStreams();
   }
 
   finishTest() {
@@ -174,7 +179,7 @@ class SpeedTestEngine {
   }
 
   updateProgressRing(percent) {
-    const circumference = 2 * Math.PI * 26; // r=26 -> ~163.36
+    const circumference = 2 * Math.PI * 26;
     const offset = circumference - (percent / 100) * circumference;
     this.elProgressRing.style.strokeDashoffset = offset;
   }
@@ -201,7 +206,7 @@ class SpeedTestEngine {
           pingSamples.push(duration);
         }
       } catch (e) {
-        // ignore single ping sample drop
+        // ignore sample drop
       }
       await new Promise(r => setTimeout(r, 60));
     }
@@ -234,31 +239,31 @@ class SpeedTestEngine {
     let bytesReceived = 0;
 
     try {
-      const response = await fetch('/api/download?size=4', { signal: controller.signal });
+      const response = await fetch('/api/download?size=3', { signal: controller.signal });
       const reader = response.body.getReader();
       this.activeReaders.push(reader);
 
       while (!this.isAborted) {
         const { done, value } = await reader.read();
-        if (done || performance.now() - start > 1000) break; // 1 second max warmup
+        if (done || performance.now() - start > 1000) break;
         bytesReceived += value.length;
       }
     } catch (e) {
-      // Warmup stream done
+      // Warmup done
     } finally {
-      this.abortAllStreams();
+      this.cleanupStreams();
     }
 
     const durationSec = (performance.now() - start) / 1000;
     const estMbps = durationSec > 0 ? (bytesReceived * 8) / (durationSec * 1000000) : 10;
 
-    if (estMbps > 120) return 6; // High speed
-    if (estMbps > 30) return 4;  // Medium speed
-    return 3;                   // Low speed/mobile
+    if (estMbps > 120) return 6;
+    if (estMbps > 30) return 4;
+    return 3;
   }
 
   // -------------------------------------------------------------------
-  // PHASE 3: MULTI-STREAM DOWNLOAD (TIME-BOUNDED GUARANTEED RESOLVE)
+  // PHASE 3: MULTI-STREAM DOWNLOAD
   // -------------------------------------------------------------------
   async runDownloadPhase(concurrency) {
     this.state = 'DOWNLOAD';
@@ -273,7 +278,6 @@ class SpeedTestEngine {
     this.activeConnections = [];
     this.activeReaders = [];
 
-    // UI Tick Interval (every 50ms)
     const interval = setInterval(() => {
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
@@ -296,7 +300,6 @@ class SpeedTestEngine {
       }
     }, 50);
 
-    // Stream Download Worker Promises
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
       const promise = (async () => {
@@ -305,8 +308,7 @@ class SpeedTestEngine {
           this.activeConnections.push(controller);
 
           try {
-            // Request 10 MB per stream chunk so it never blocks low bandwidth
-            const response = await fetch(`/api/download?size=10&id=${i}`, { signal: controller.signal });
+            const response = await fetch(`/api/download?size=8&id=${i}`, { signal: controller.signal });
             const reader = response.body.getReader();
             this.activeReaders.push(reader);
 
@@ -324,16 +326,12 @@ class SpeedTestEngine {
       streamPromises.push(promise);
     }
 
-    // Hard timeout timer to guarantee download phase finishes cleanly after downloadDurationMs
     const timeoutPromise = new Promise(resolve => setTimeout(resolve, this.downloadDurationMs));
     await Promise.race([Promise.all(streamPromises), timeoutPromise]);
 
-    // Clean up all active download streams
     clearInterval(interval);
-    this.abortAllStreams();
-    this.isAborted = false; // Reset abort flag for upload phase
+    this.cleanupStreams();
 
-    // Measure loaded ping under load
     this.measureLoadedPing();
   }
 
@@ -351,7 +349,7 @@ class SpeedTestEngine {
   }
 
   // -------------------------------------------------------------------
-  // PHASE 4: MULTI-STREAM UPLOAD (TIME-BOUNDED GUARANTEED RESOLVE)
+  // PHASE 4: MULTI-STREAM UPLOAD
   // -------------------------------------------------------------------
   async runUploadPhase(concurrency) {
     if (this.isAborted) return;
@@ -359,7 +357,6 @@ class SpeedTestEngine {
     this.state = 'UPLOAD';
     this.elStatus.textContent = 'Testing upload speed...';
 
-    // Pre-allocate ONE 1 MB dummy chunk in RAM once
     const UPLOAD_CHUNK_SIZE = 1024 * 1024;
     const dummyChunk = new Uint8Array(UPLOAD_CHUNK_SIZE);
     for (let i = 0; i < UPLOAD_CHUNK_SIZE; i++) {
@@ -373,7 +370,6 @@ class SpeedTestEngine {
 
     this.activeConnections = [];
 
-    // UI Tick Interval (every 50ms)
     const interval = setInterval(() => {
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
@@ -396,7 +392,6 @@ class SpeedTestEngine {
       }
     }, 50);
 
-    // Launch N Parallel Upload Workers
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
       const promise = (async () => {
@@ -421,14 +416,11 @@ class SpeedTestEngine {
       streamPromises.push(promise);
     }
 
-    // Hard timeout timer to guarantee upload phase finishes cleanly
     const timeoutPromise = new Promise(resolve => setTimeout(resolve, this.uploadDurationMs));
     await Promise.race([Promise.all(streamPromises), timeoutPromise]);
 
-    // Clean up upload phase
     clearInterval(interval);
-    this.abortAllStreams();
-    this.isAborted = false;
+    this.cleanupStreams();
   }
 
   // -------------------------------------------------------------------

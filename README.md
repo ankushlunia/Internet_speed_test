@@ -1,66 +1,48 @@
-# ⚡ Internet Speed Test App
+# Internet Speed Test
 
-A high-precision internet speed testing web application inspired by Fast.com and Ookla Speedtest. Built with a Node.js dynamic streaming backend and an ultra-minimalist frontend UI focused on displaying speed prominently.
+An internet speed test web application built with Node.js and JavaScript. Measures download speed, upload speed, latency (ping), and jitter using multi-connection streaming.
 
-![Speed Test Preview](https://img.shields.io/badge/SpeedTest-Mbps-f59e0b?style=for-the-badge)
+## Features
 
-## 🚀 Features
+* Minimalist UI inspired by Fast.com
+* Multi-connection parallel download and upload testing
+* In-memory byte streaming to prevent disk I/O bottlenecks
+* Real-time Mbps speed counter and live waveform graph
+* Measures Ping, Jitter, and Loaded Ping under network load
+* Low browser memory usage during tests
 
-* **Ultra-Minimal UI**: Clean, Fast.com inspired hero interface centered on a bold live speed counter.
-* **Streaming Backend Engine**: Dynamic pseudo-random memory streams over HTTP/1.1 & HTTP/2 (`/api/download`, `/api/upload`, `/api/ping`) with zero disk I/O bottlenecks.
-* **Low-Overhead Ping & Jitter**: Computes real-time RTT latency and jitter variance using multi-sample ping probes.
-* **Adaptive Multi-Stream Concurrency**: Automatically tunes stream count (4–8 parallel TCP streams) based on link capacity.
-* **Ultra-Low Memory Footprint**: Upload engine re-uses a single 1 MB array buffer in browser RAM, ensuring zero memory bloat even during gigabit transfer tests.
-* **Expandable Stats Panel**: Toggle details for Latency, Jitter, Upload speed, Loaded Ping, Server info, and a real-time speed waveform canvas graph.
-* **Light / Dark Theme Support**: Smooth theme switching with sleek glassmorphism aesthetic.
+## Requirements
 
----
+* Node.js (v14 or higher)
+* npm
 
-## 🛠️ Technology Stack
+## Getting Started
 
-* **Backend**: Node.js, Express, CORS
-* **Frontend**: HTML5, Vanilla CSS3 (CSS Variables, Flexbox/Grid, Animations), JavaScript ES6+ (Fetch API, ReadableStream)
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ankushlunia/Internet_speed_test.git
+   cd Internet_speed_test
+   ```
 
----
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## ⚡ Quick Start
+3. Start the server:
+   ```bash
+   npm start
+   ```
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/ankushlunia/speedtest-app.git
-cd speedtest-app
-```
+4. Open your browser and navigate to `http://localhost:3005`.
 
-### 2. Install Dependencies
-```bash
-npm install
-```
+## API Endpoints
 
-### 3. Run the Application
-```bash
-npm start
-```
+* `GET /api/ping` - Returns server timestamp for measuring latency and round-trip time.
+* `GET /api/download?size=MB` - Streams pseudo-random binary data chunks for download speed measurement.
+* `POST /api/upload` - Receives uploaded data chunks and discards them while tracking total bytes.
+* `GET /api/server-info` - Returns server details and location metadata.
 
-Open `http://localhost:3005` in your browser to run the speed test!
+## License
 
----
-
-## 📁 Project Structure
-
-```
-speedtest-app/
-├── package.json         # Node.js dependencies and scripts
-├── server.js            # Express backend with streaming APIs
-├── README.md            # Project documentation
-├── .gitignore           # Git ignore rules
-└── public/
-    ├── index.html       # Minimalist UI shell
-    ├── style.css        # Glassmorphic design & typography
-    └── app.js           # Speed test calculation engine
-```
-
----
-
-## 📜 License
-
-MIT License © 2026 Ankush Lunia
+MIT
