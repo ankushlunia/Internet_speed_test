@@ -1,6 +1,7 @@
 /**
  * ==========================================================================
  * HIGH-PRECISION INTERNET SPEED TEST ENGINE & MINIMALIST UI CONTROLLER
+ * (Google / Fast.com Inspired Sustained Throughput & Smooth Interpolation)
  * ==========================================================================
  */
 
@@ -10,10 +11,10 @@ class SpeedTestEngine {
     this.state = 'IDLE';
     
     // Phase Durations (ms)
-    this.downloadDurationMs = 7000;
-    this.uploadDurationMs = 6000;
+    this.downloadDurationMs = 8000;
+    this.uploadDurationMs = 7000;
     
-    // Metrics
+    // Performance Metrics
     this.ping = 0;
     this.jitter = 0;
     this.downloadMbps = 0;
@@ -26,9 +27,14 @@ class SpeedTestEngine {
     this.isAborted = false;
     this.isPaused = false;
 
-    // Stream references
+    // Stream & Worker references
     this.activeConnections = [];
     this.activeReaders = [];
+    
+    // UI Display Smoothing
+    this.displayedSpeed = 0;
+    this.targetSpeed = 0;
+    this.animFrameId = null;
     
     // Chart data history
     this.chartData = [];
@@ -86,6 +92,38 @@ class SpeedTestEngine {
     }
   }
 
+  // -------------------------------------------------------------------
+  // SMOOTH UI RENDER LOOP (60 FPS)
+  // -------------------------------------------------------------------
+  startUIRenderLoop() {
+    const render = () => {
+      // Smooth lerp (linear interpolation) towards targetSpeed
+      const diff = this.targetSpeed - this.displayedSpeed;
+      if (Math.abs(diff) > 0.05) {
+        this.displayedSpeed += diff * 0.08; // smooth 8% step per frame
+      } else {
+        this.displayedSpeed = this.targetSpeed;
+      }
+
+      this.elSpeedVal.textContent = Math.round(this.displayedSpeed);
+      this.animFrameId = requestAnimationFrame(render);
+    };
+
+    if (!this.animFrameId) {
+      this.animFrameId = requestAnimationFrame(render);
+    }
+  }
+
+  stopUIRenderLoop() {
+    if (this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // TEST LIFECYCLE MANAGEMENT
+  // -------------------------------------------------------------------
   async startTest() {
     if (this.state === 'PING' || this.state === 'WARMUP' || this.state === 'DOWNLOAD' || this.state === 'UPLOAD') {
       return;
@@ -95,18 +133,21 @@ class SpeedTestEngine {
     this.isPaused = false;
     this.isDownloadActive = false;
     this.isUploadActive = false;
+    this.displayedSpeed = 0;
+    this.targetSpeed = 0;
     
     this.chartData = [];
     this.clearChart();
     
     this.setButtonState('pause');
     this.elSpeedVal.classList.add('active');
+    this.startUIRenderLoop();
 
     // Step 1: Ping
     await this.runPingPhase();
     if (this.isAborted) return;
 
-    // Step 2: Warmup
+    // Step 2: Warmup & Concurrency Tuning
     const concurrency = await this.runWarmupPhase();
     if (this.isAborted) return;
 
@@ -138,6 +179,7 @@ class SpeedTestEngine {
     this.isDownloadActive = false;
     this.isUploadActive = false;
     this.abortAllStreams();
+    this.stopUIRenderLoop();
     this.setButtonState('play');
     this.elStatus.textContent = 'Test Paused';
     this.elSpeedVal.classList.remove('active');
@@ -168,10 +210,16 @@ class SpeedTestEngine {
 
   finishTest() {
     this.state = 'FINISHED';
+    this.stopUIRenderLoop();
+    
+    // Set final display to sustained download Mbps
+    this.targetSpeed = this.downloadMbps;
+    this.displayedSpeed = this.downloadMbps;
+    this.elSpeedVal.textContent = Math.round(this.downloadMbps);
+
     this.setButtonState('restart');
     this.updateProgressRing(100);
     this.elStatus.textContent = 'Your Internet Speed Is';
-    this.elSpeedVal.textContent = Math.round(this.downloadMbps);
     this.elSpeedVal.classList.remove('active');
   }
 
@@ -188,7 +236,7 @@ class SpeedTestEngine {
   }
 
   // -------------------------------------------------------------------
-  // PHASE 1: PING & JITTER
+  // PHASE 1: PING & JITTER (TRIMMED MEAN)
   // -------------------------------------------------------------------
   async runPingPhase() {
     this.state = 'PING';
@@ -196,7 +244,7 @@ class SpeedTestEngine {
     this.updateProgressRing(10);
 
     const pingSamples = [];
-    const numSamples = 5;
+    const numSamples = 6;
 
     for (let i = 0; i < numSamples; i++) {
       if (this.isAborted) return;
@@ -209,19 +257,24 @@ class SpeedTestEngine {
           pingSamples.push(duration);
         }
       } catch (e) {
-        // ignore
+        // ignore single ping drop
       }
       await new Promise(r => setTimeout(r, 60));
     }
 
     if (pingSamples.length > 0) {
-      const sum = pingSamples.reduce((a, b) => a + b, 0);
-      this.ping = Math.round(sum / pingSamples.length);
+      // Sort ping samples to calculate median/trimmed mean
+      pingSamples.sort((a, b) => a - b);
+      
+      // Trim top and bottom outliers if we have enough samples
+      const validSamples = pingSamples.length >= 4 ? pingSamples.slice(1, -1) : pingSamples;
+      const sum = validSamples.reduce((a, b) => a + b, 0);
+      this.ping = Math.round(sum / validSamples.length);
       this.elPingVal.textContent = this.ping;
 
-      const avg = sum / pingSamples.length;
-      const squareDiffs = pingSamples.map(val => Math.pow(val - avg, 2));
-      const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / pingSamples.length;
+      const avg = sum / validSamples.length;
+      const squareDiffs = validSamples.map(val => Math.pow(val - avg, 2));
+      const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / validSamples.length;
       this.jitter = Math.round(Math.sqrt(avgSquareDiff) * 10) / 10;
       this.elJitterVal.textContent = this.jitter;
     }
@@ -260,13 +313,13 @@ class SpeedTestEngine {
     const durationSec = (performance.now() - start) / 1000;
     const estMbps = durationSec > 0 ? (bytesReceived * 8) / (durationSec * 1000000) : 10;
 
-    if (estMbps > 120) return 6;
+    if (estMbps > 100) return 6;
     if (estMbps > 30) return 4;
     return 3;
   }
 
   // -------------------------------------------------------------------
-  // PHASE 3: MULTI-STREAM DOWNLOAD
+  // PHASE 3: MULTI-STREAM DOWNLOAD (SLIDING WINDOW & TRIMMED MEAN)
   // -------------------------------------------------------------------
   async runDownloadPhase(concurrency) {
     this.state = 'DOWNLOAD';
@@ -275,35 +328,54 @@ class SpeedTestEngine {
     this.elSpeedUnit.textContent = 'Mbps';
 
     const startTime = performance.now();
-    let bytesInWindow = 0;
-    let lastWindowTime = startTime;
-    let smoothedSpeed = 0;
+    let totalBytesAccumulated = 0;
+    
+    // Time-stamped byte sample log: { time, bytes }
+    const byteSamples = [{ time: startTime, bytes: 0 }];
+    const calculatedSpeeds = [];
 
     this.activeConnections = [];
     this.activeReaders = [];
 
+    // Continuous 1-Second Sliding Window Calculation (every 100ms)
     const interval = setInterval(() => {
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
-      const elapsedWindowSec = (now - lastWindowTime) / 1000;
 
-      if (elapsedWindowSec > 0.05) {
-        const instantMbps = (bytesInWindow * 8) / (elapsedWindowSec * 1000000);
-        bytesInWindow = 0;
-        lastWindowTime = now;
+      byteSamples.push({ time: now, bytes: totalBytesAccumulated });
 
-        smoothedSpeed = smoothedSpeed === 0 ? instantMbps : smoothedSpeed * 0.7 + instantMbps * 0.3;
-        
-        this.downloadMbps = smoothedSpeed;
-        this.elSpeedVal.textContent = Math.round(smoothedSpeed);
+      // Find sample from ~1000ms ago for stable 1-second sliding window
+      const targetWindowTime = now - 1000;
+      let pastSample = byteSamples[0];
+      for (let i = byteSamples.length - 1; i >= 0; i--) {
+        if (byteSamples[i].time <= targetWindowTime) {
+          pastSample = byteSamples[i];
+          break;
+        }
+      }
+
+      const windowBytes = totalBytesAccumulated - pastSample.bytes;
+      const windowSec = (now - pastSample.time) / 1000;
+
+      if (windowSec > 0.2) {
+        const instantMbps = (windowBytes * 8) / (windowSec * 1000000);
+
+        // Target speed for smooth 60 FPS counter lerp
+        this.targetSpeed = instantMbps;
+
+        // Record speed sample after 1.2s TCP slow-start ramp
+        if (elapsedTotalMs > 1200) {
+          calculatedSpeeds.push(instantMbps);
+        }
 
         const progress = 20 + Math.min(45, (elapsedTotalMs / this.downloadDurationMs) * 45);
         this.updateProgressRing(progress);
 
-        this.addChartPoint(elapsedTotalMs / 1000, Math.round(smoothedSpeed), 'download');
+        this.addChartPoint(elapsedTotalMs / 1000, Math.round(instantMbps), 'download');
       }
-    }, 50);
+    }, 100);
 
+    // Launch Concurrency Streams
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
       const promise = (async () => {
@@ -312,14 +384,14 @@ class SpeedTestEngine {
           this.activeConnections.push(controller);
 
           try {
-            const response = await fetch(`/api/download?size=8&id=${i}`, { signal: controller.signal });
+            const response = await fetch(`/api/download?size=10&id=${i}`, { signal: controller.signal });
             const reader = response.body.getReader();
             this.activeReaders.push(reader);
 
             while (this.isDownloadActive && !this.isAborted) {
               const { done, value } = await reader.read();
               if (done) break;
-              bytesInWindow += value.length;
+              totalBytesAccumulated += value.length;
             }
           } catch (e) {
             break;
@@ -330,13 +402,23 @@ class SpeedTestEngine {
       streamPromises.push(promise);
     }
 
-    // Wait for duration or timeout
     await new Promise(resolve => setTimeout(resolve, this.downloadDurationMs));
 
-    // Turn OFF download active flag so while loops terminate immediately!
     this.isDownloadActive = false;
     clearInterval(interval);
     this.cleanupStreams();
+
+    // Compute Final Sustained Download Speed (80th Percentile Trimmed Mean)
+    if (calculatedSpeeds.length > 0) {
+      calculatedSpeeds.sort((a, b) => a - b);
+      // Take 80th percentile range to eliminate transient buffer dips & bursts
+      const p80Index = Math.floor(calculatedSpeeds.length * 0.8);
+      const sustainedRange = calculatedSpeeds.slice(0, p80Index + 1);
+      const sum = sustainedRange.reduce((a, b) => a + b, 0);
+      this.downloadMbps = sum / sustainedRange.length;
+    } else {
+      this.downloadMbps = this.targetSpeed;
+    }
 
     this.measureLoadedPing();
   }
@@ -350,12 +432,12 @@ class SpeedTestEngine {
         this.elLoadedPingVal.textContent = this.loadedPing;
       }
     } catch (e) {
-      this.elLoadedPingVal.textContent = Math.round(this.ping * 1.25);
+      this.elLoadedPingVal.textContent = Math.round(this.ping * 1.2);
     }
   }
 
   // -------------------------------------------------------------------
-  // PHASE 4: MULTI-STREAM UPLOAD
+  // PHASE 4: MULTI-STREAM UPLOAD (SLIDING WINDOW & TRIMMED MEAN)
   // -------------------------------------------------------------------
   async runUploadPhase(concurrency) {
     if (this.isAborted) return;
@@ -364,7 +446,6 @@ class SpeedTestEngine {
     this.isUploadActive = true;
     this.elStatus.textContent = 'Testing upload speed...';
 
-    // Allocate 256 KB chunk for high browser compatibility & fast POST roundtrips
     const UPLOAD_CHUNK_SIZE = 256 * 1024; // 256 KB
     const dummyChunk = new Uint8Array(UPLOAD_CHUNK_SIZE);
     for (let i = 0; i < UPLOAD_CHUNK_SIZE; i++) {
@@ -372,34 +453,49 @@ class SpeedTestEngine {
     }
 
     const startTime = performance.now();
-    let bytesInWindow = 0;
-    let lastWindowTime = startTime;
-    let smoothedSpeed = 0;
+    let totalBytesUploaded = 0;
+    
+    const byteSamples = [{ time: startTime, bytes: 0 }];
+    const calculatedSpeeds = [];
 
     this.activeConnections = [];
 
     const interval = setInterval(() => {
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
-      const elapsedWindowSec = (now - lastWindowTime) / 1000;
 
-      if (elapsedWindowSec > 0.05) {
-        const instantMbps = (bytesInWindow * 8) / (elapsedWindowSec * 1000000);
-        bytesInWindow = 0;
-        lastWindowTime = now;
+      byteSamples.push({ time: now, bytes: totalBytesUploaded });
 
-        smoothedSpeed = smoothedSpeed === 0 ? instantMbps : smoothedSpeed * 0.7 + instantMbps * 0.3;
+      const targetWindowTime = now - 1000;
+      let pastSample = byteSamples[0];
+      for (let i = byteSamples.length - 1; i >= 0; i--) {
+        if (byteSamples[i].time <= targetWindowTime) {
+          pastSample = byteSamples[i];
+          break;
+        }
+      }
 
-        this.uploadMbps = smoothedSpeed;
-        const formattedUpload = (Math.round(smoothedSpeed * 10) / 10).toFixed(1);
+      const windowBytes = totalBytesUploaded - pastSample.bytes;
+      const windowSec = (now - pastSample.time) / 1000;
+
+      if (windowSec > 0.2) {
+        const instantMbps = (windowBytes * 8) / (windowSec * 1000000);
+
+        this.targetSpeed = instantMbps;
+
+        if (elapsedTotalMs > 1000) {
+          calculatedSpeeds.push(instantMbps);
+        }
+
+        const formattedUpload = (Math.round(instantMbps * 10) / 10).toFixed(1);
         this.elUploadVal.textContent = formattedUpload;
 
         const progress = 65 + Math.min(35, (elapsedTotalMs / this.uploadDurationMs) * 35);
         this.updateProgressRing(progress);
 
-        this.addChartPoint(this.downloadDurationMs / 1000 + elapsedTotalMs / 1000, Math.round(smoothedSpeed), 'upload');
+        this.addChartPoint(this.downloadDurationMs / 1000 + elapsedTotalMs / 1000, Math.round(instantMbps), 'upload');
       }
-    }, 50);
+    }, 100);
 
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
@@ -416,7 +512,7 @@ class SpeedTestEngine {
               headers: { 'Content-Type': 'application/octet-stream' }
             });
             if (res.ok) {
-              bytesInWindow += UPLOAD_CHUNK_SIZE;
+              totalBytesUploaded += UPLOAD_CHUNK_SIZE;
             }
           } catch (e) {
             break;
@@ -429,10 +525,22 @@ class SpeedTestEngine {
 
     await new Promise(resolve => setTimeout(resolve, this.uploadDurationMs));
 
-    // Turn OFF upload active flag so loops terminate immediately
     this.isUploadActive = false;
     clearInterval(interval);
     this.cleanupStreams();
+
+    // Compute Final Sustained Upload Speed
+    if (calculatedSpeeds.length > 0) {
+      calculatedSpeeds.sort((a, b) => a - b);
+      const p80Index = Math.floor(calculatedSpeeds.length * 0.8);
+      const sustainedRange = calculatedSpeeds.slice(0, p80Index + 1);
+      const sum = sustainedRange.reduce((a, b) => a + b, 0);
+      this.uploadMbps = sum / sustainedRange.length;
+    } else {
+      this.uploadMbps = this.targetSpeed;
+    }
+
+    this.elUploadVal.textContent = (Math.round(this.uploadMbps * 10) / 10).toFixed(1);
   }
 
   // -------------------------------------------------------------------
