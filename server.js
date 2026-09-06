@@ -6,8 +6,9 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3005;
 
-// Enable CORS for all routes
+// Enable CORS for all routes including OPTIONS preflight
 app.use(cors());
+app.options('*', cors());
 
 // Serve static assets from 'public' folder
 app.use(express.static(path.join(__dirname, 'public')));

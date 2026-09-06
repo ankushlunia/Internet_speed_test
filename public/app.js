@@ -9,24 +9,28 @@ class SpeedTestEngine {
     // Lifecycle States: 'IDLE' | 'PING' | 'WARMUP' | 'DOWNLOAD' | 'UPLOAD' | 'FINISHED' | 'PAUSED'
     this.state = 'IDLE';
     
-    // Test Durations (ms)
+    // Phase Durations (ms)
     this.downloadDurationMs = 7000;
     this.uploadDurationMs = 6000;
     
-    // Performance Metrics
+    // Metrics
     this.ping = 0;
     this.jitter = 0;
     this.downloadMbps = 0;
     this.uploadMbps = 0;
     this.loadedPing = 0;
 
-    // Real-time tracking vars
-    this.activeConnections = [];
-    this.activeReaders = [];
+    // Active Phase Flags
+    this.isDownloadActive = false;
+    this.isUploadActive = false;
     this.isAborted = false;
     this.isPaused = false;
+
+    // Stream references
+    this.activeConnections = [];
+    this.activeReaders = [];
     
-    // Chart history
+    // Chart data history
     this.chartData = [];
     
     // UI Elements
@@ -34,7 +38,7 @@ class SpeedTestEngine {
     this.bindEvents();
     this.initChart();
     
-    // Fetch Server Metadata
+    // Fetch Server Info
     this.fetchServerInfo();
 
     // Auto-start test on page load
@@ -70,9 +74,6 @@ class SpeedTestEngine {
     this.elThemeBtn.addEventListener('click', () => this.toggleTheme());
   }
 
-  // -------------------------------------------------------------------
-  // SERVER METADATA
-  // -------------------------------------------------------------------
   async fetchServerInfo() {
     try {
       const res = await fetch('/api/server-info');
@@ -81,13 +82,10 @@ class SpeedTestEngine {
         this.elServerInfo.textContent = `${info.location} (${info.serverName})`;
       }
     } catch (e) {
-      this.elServerInfo.textContent = 'Local Server';
+      this.elServerInfo.textContent = 'SpeedTest Server Node';
     }
   }
 
-  // -------------------------------------------------------------------
-  // TEST LIFECYCLE MANAGEMENT
-  // -------------------------------------------------------------------
   async startTest() {
     if (this.state === 'PING' || this.state === 'WARMUP' || this.state === 'DOWNLOAD' || this.state === 'UPLOAD') {
       return;
@@ -95,29 +93,32 @@ class SpeedTestEngine {
 
     this.isAborted = false;
     this.isPaused = false;
+    this.isDownloadActive = false;
+    this.isUploadActive = false;
+    
     this.chartData = [];
     this.clearChart();
     
     this.setButtonState('pause');
     this.elSpeedVal.classList.add('active');
 
-    // Step 1: Latency & Jitter
+    // Step 1: Ping
     await this.runPingPhase();
     if (this.isAborted) return;
 
-    // Step 2: Warmup & Concurrency Tuning
+    // Step 2: Warmup
     const concurrency = await this.runWarmupPhase();
     if (this.isAborted) return;
 
-    // Step 3: Multi-Connection Download Phase
+    // Step 3: Download
     await this.runDownloadPhase(concurrency);
     if (this.isAborted) return;
 
-    // Step 4: Multi-Connection Upload Phase
+    // Step 4: Upload
     await this.runUploadPhase(concurrency);
     if (this.isAborted) return;
 
-    // Finish Test
+    // Finish
     this.finishTest();
   }
 
@@ -134,6 +135,8 @@ class SpeedTestEngine {
   pauseTest() {
     this.isPaused = true;
     this.state = 'PAUSED';
+    this.isDownloadActive = false;
+    this.isUploadActive = false;
     this.abortAllStreams();
     this.setButtonState('play');
     this.elStatus.textContent = 'Test Paused';
@@ -144,7 +147,6 @@ class SpeedTestEngine {
     this.startTest();
   }
 
-  // Clean up network connections without marking the overall test aborted
   cleanupStreams() {
     this.activeReaders.forEach(reader => {
       try { reader.cancel(); } catch (e) {}
@@ -157,9 +159,10 @@ class SpeedTestEngine {
     this.activeConnections = [];
   }
 
-  // User-initiated or hard abort
   abortAllStreams() {
     this.isAborted = true;
+    this.isDownloadActive = false;
+    this.isUploadActive = false;
     this.cleanupStreams();
   }
 
@@ -185,7 +188,7 @@ class SpeedTestEngine {
   }
 
   // -------------------------------------------------------------------
-  // PHASE 1: LATENCY & JITTER
+  // PHASE 1: PING & JITTER
   // -------------------------------------------------------------------
   async runPingPhase() {
     this.state = 'PING';
@@ -206,7 +209,7 @@ class SpeedTestEngine {
           pingSamples.push(duration);
         }
       } catch (e) {
-        // ignore sample drop
+        // ignore
       }
       await new Promise(r => setTimeout(r, 60));
     }
@@ -225,7 +228,7 @@ class SpeedTestEngine {
   }
 
   // -------------------------------------------------------------------
-  // PHASE 2: WARMUP & ADAPTIVE TUNING
+  // PHASE 2: WARMUP
   // -------------------------------------------------------------------
   async runWarmupPhase() {
     this.state = 'WARMUP';
@@ -267,6 +270,7 @@ class SpeedTestEngine {
   // -------------------------------------------------------------------
   async runDownloadPhase(concurrency) {
     this.state = 'DOWNLOAD';
+    this.isDownloadActive = true;
     this.elStatus.textContent = 'Testing download speed...';
     this.elSpeedUnit.textContent = 'Mbps';
 
@@ -303,7 +307,7 @@ class SpeedTestEngine {
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
       const promise = (async () => {
-        while (!this.isAborted) {
+        while (this.isDownloadActive && !this.isAborted) {
           const controller = new AbortController();
           this.activeConnections.push(controller);
 
@@ -312,7 +316,7 @@ class SpeedTestEngine {
             const reader = response.body.getReader();
             this.activeReaders.push(reader);
 
-            while (!this.isAborted) {
+            while (this.isDownloadActive && !this.isAborted) {
               const { done, value } = await reader.read();
               if (done) break;
               bytesInWindow += value.length;
@@ -326,9 +330,11 @@ class SpeedTestEngine {
       streamPromises.push(promise);
     }
 
-    const timeoutPromise = new Promise(resolve => setTimeout(resolve, this.downloadDurationMs));
-    await Promise.race([Promise.all(streamPromises), timeoutPromise]);
+    // Wait for duration or timeout
+    await new Promise(resolve => setTimeout(resolve, this.downloadDurationMs));
 
+    // Turn OFF download active flag so while loops terminate immediately!
+    this.isDownloadActive = false;
     clearInterval(interval);
     this.cleanupStreams();
 
@@ -355,9 +361,11 @@ class SpeedTestEngine {
     if (this.isAborted) return;
 
     this.state = 'UPLOAD';
+    this.isUploadActive = true;
     this.elStatus.textContent = 'Testing upload speed...';
 
-    const UPLOAD_CHUNK_SIZE = 1024 * 1024;
+    // Allocate 256 KB chunk for high browser compatibility & fast POST roundtrips
+    const UPLOAD_CHUNK_SIZE = 256 * 1024; // 256 KB
     const dummyChunk = new Uint8Array(UPLOAD_CHUNK_SIZE);
     for (let i = 0; i < UPLOAD_CHUNK_SIZE; i++) {
       dummyChunk[i] = Math.floor(Math.random() * 256);
@@ -383,7 +391,8 @@ class SpeedTestEngine {
         smoothedSpeed = smoothedSpeed === 0 ? instantMbps : smoothedSpeed * 0.7 + instantMbps * 0.3;
 
         this.uploadMbps = smoothedSpeed;
-        this.elUploadVal.textContent = (Math.round(smoothedSpeed * 10) / 10).toFixed(1);
+        const formattedUpload = (Math.round(smoothedSpeed * 10) / 10).toFixed(1);
+        this.elUploadVal.textContent = formattedUpload;
 
         const progress = 65 + Math.min(35, (elapsedTotalMs / this.uploadDurationMs) * 35);
         this.updateProgressRing(progress);
@@ -395,18 +404,20 @@ class SpeedTestEngine {
     const streamPromises = [];
     for (let i = 0; i < concurrency; i++) {
       const promise = (async () => {
-        while (!this.isAborted) {
+        while (this.isUploadActive && !this.isAborted) {
           const controller = new AbortController();
           this.activeConnections.push(controller);
 
           try {
-            await fetch('/api/upload', {
+            const res = await fetch('/api/upload', {
               method: 'POST',
               body: dummyChunk,
               signal: controller.signal,
               headers: { 'Content-Type': 'application/octet-stream' }
             });
-            bytesInWindow += UPLOAD_CHUNK_SIZE;
+            if (res.ok) {
+              bytesInWindow += UPLOAD_CHUNK_SIZE;
+            }
           } catch (e) {
             break;
           }
@@ -416,15 +427,16 @@ class SpeedTestEngine {
       streamPromises.push(promise);
     }
 
-    const timeoutPromise = new Promise(resolve => setTimeout(resolve, this.uploadDurationMs));
-    await Promise.race([Promise.all(streamPromises), timeoutPromise]);
+    await new Promise(resolve => setTimeout(resolve, this.uploadDurationMs));
 
+    // Turn OFF upload active flag so loops terminate immediately
+    this.isUploadActive = false;
     clearInterval(interval);
     this.cleanupStreams();
   }
 
   // -------------------------------------------------------------------
-  // LIVE CANVAS SPEED WAVEFORM CHART
+  // LIVE CANVAS CHART
   // -------------------------------------------------------------------
   initChart() {
     this.ctx = this.canvas.getContext('2d');
@@ -499,7 +511,6 @@ class SpeedTestEngine {
   }
 }
 
-// Instantiate engine when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   window.speedTestApp = new SpeedTestEngine();
 });
