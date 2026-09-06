@@ -318,6 +318,14 @@ class SpeedTestEngine {
     return 3;
   }
 
+  // Determine optimal upload chunk size based on measured ping
+  // High latency = bigger chunks to amortize round-trip overhead
+  getUploadChunkSize() {
+    if (this.ping > 200) return 4 * 1024 * 1024;  // 4 MB for very high latency (cloud far away)
+    if (this.ping > 80) return 2 * 1024 * 1024;   // 2 MB for moderate latency
+    return 1 * 1024 * 1024;                       // 1 MB for low latency (local/nearby)
+  }
+
   // -------------------------------------------------------------------
   // PHASE 3: MULTI-STREAM DOWNLOAD (SLIDING WINDOW & TRIMMED MEAN)
   // -------------------------------------------------------------------
@@ -384,7 +392,7 @@ class SpeedTestEngine {
           this.activeConnections.push(controller);
 
           try {
-            const response = await fetch(`/api/download?size=10&id=${i}`, { signal: controller.signal });
+            const response = await fetch(`/api/download?size=25&id=${i}`, { signal: controller.signal });
             const reader = response.body.getReader();
             this.activeReaders.push(reader);
 
@@ -446,10 +454,17 @@ class SpeedTestEngine {
     this.isUploadActive = true;
     this.elStatus.textContent = 'Testing upload speed...';
 
-    const UPLOAD_CHUNK_SIZE = 256 * 1024; // 256 KB
+    // Use more upload connections than download to keep the pipe full
+    const uploadConcurrency = Math.max(concurrency, 4) + 2;
+
+    // Adaptive chunk size based on measured ping
+    const UPLOAD_CHUNK_SIZE = this.getUploadChunkSize();
     const dummyChunk = new Uint8Array(UPLOAD_CHUNK_SIZE);
+    // Fill with pseudo-random bytes (prevents compression from distorting results)
+    const randomSeed = new Uint8Array(256);
+    crypto.getRandomValues(randomSeed);
     for (let i = 0; i < UPLOAD_CHUNK_SIZE; i++) {
-      dummyChunk[i] = Math.floor(Math.random() * 256);
+      dummyChunk[i] = randomSeed[i % 256] ^ (i & 0xFF);
     }
 
     const startTime = performance.now();
@@ -498,7 +513,7 @@ class SpeedTestEngine {
     }, 100);
 
     const streamPromises = [];
-    for (let i = 0; i < concurrency; i++) {
+    for (let i = 0; i < uploadConcurrency; i++) {
       const promise = (async () => {
         while (this.isUploadActive && !this.isAborted) {
           const controller = new AbortController();
